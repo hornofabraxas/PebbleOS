@@ -1,0 +1,68 @@
+name: Sync on upstream release
+
+# Polls upstream PebbleOS for a new *release*. When one appears that we have not
+# built yet, it rebases the two PebbleOS+ feature commits onto that release tag
+# and dispatches the build/test/boot/release pipeline. A rebase conflict fails
+# the run (that is the signal for manual reconciliation).
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # hourly (at :23)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: pebbleos-plus
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - name: Configure git identity
+        run: |
+          git config user.name "pebbleos-plus-bot"
+          git config user.email "actions@github.com"
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/coredevices/pebbleos.git || true
+          git fetch upstream --tags --force --quiet
+      - name: Detect a new upstream release to build
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          T=$(gh api repos/coredevices/pebbleos/releases/latest --jq '.tag_name')
+          echo "latest upstream release: $T"
+          if gh release view "${T}-plus" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Already built ${T}-plus; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git merge-base --is-ancestor "$T" HEAD 2>/dev/null; then
+            echo "Our branch is already at or past ${T}; nothing new to build."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "New release ${T} is ahead of our branch; will rebase and build."
+          echo "act=true"  >> "$GITHUB_OUTPUT"
+          echo "tag=$T"    >> "$GITHUB_OUTPUT"
+      - name: Rebase feature commits onto the release tag
+        if: steps.detect.outputs.act == 'true'
+        run: |
+          set -e
+          if ! git rebase "${{ steps.detect.outputs.tag }}"; then
+            git rebase --abort || true
+            echo "::error::Rebase onto ${{ steps.detect.outputs.tag }} conflicted. Manual reconciliation needed."
+            exit 1
+          fi
+          git push --force-with-lease origin pebbleos-plus
+      - name: Dispatch the build pipeline
+        if: steps.detect.outputs.act == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pebbleos-plus.yml --repo "$GITHUB_REPOSITORY" --ref pebbleos-plus
+          echo "Dispatched PebbleOS+ build for ${{ steps.detect.outputs.tag }}-plus."
