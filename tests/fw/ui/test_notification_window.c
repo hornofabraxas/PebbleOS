@@ -675,16 +675,21 @@ void test_notification_window__non_silent_ancs_shown_when_pref_on(void) {
   cl_assert(s_should_vibrate_call_count > 0);
 }
 
-void test_notification_window__silent_ancs_shown_when_pref_off(void) {
+// PebbleOS+: the respect-phone-silence pref is intentionally ignored; a phone-silent
+// notification is suppressed unconditionally, even with the pref off (so a stored or
+// phone-synced pref value can never re-enable the buzz).
+void test_notification_window__silent_ancs_suppressed_ignoring_pref(void) {
   prv_setup_quiet_delivery_test();
   s_respect_phone_silence = false;
 
   prv_store_and_add_notification(&s_quiet_notif_id, true /* ancs_notif */, true /* silent */);
 
-  cl_assert(s_in_use);
-  cl_assert_equal_i(notifications_presented_list_count(), 1);
-  cl_assert(uuid_equal(notifications_presented_list_current(), &s_quiet_notif_id));
-  cl_assert(s_should_vibrate_call_count > 0);
+  cl_assert(!s_in_use);
+  cl_assert_equal_i(notifications_presented_list_count(), 0);
+  cl_assert_equal_i(s_should_vibrate_call_count, 0);
+  TimelineItem item = {};
+  cl_assert(notification_storage_get(&s_quiet_notif_id, &item));
+  cl_assert_equal_i(s_notification_remove_count, 0);
 }
 
 void test_notification_window__big_bold(void) {
