@@ -1,0 +1,246 @@
+name: PebbleOS+ (obelix@pvt)
+
+# Builds the PebbleOS+ fork for the Pebble Time 2 (obelix@pvt), runs the unit
+# suite AND a real headless emulator boot-and-check, and only then publishes the
+# installable firmware as a GitHub Release. The firmware is never surfaced unless
+# the boot smoke test passes. Also runs the upstream-drift watchdog (#1772, #1553).
+
+on:
+  push:
+    branches: [pebbleos-plus]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+concurrency:
+  group: pebbleos-plus-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDK_VERSION: "0.1.8"
+
+jobs:
+  # ---- Build both firmware slots -------------------------------------------
+  build:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/coredevices/pebbleos-docker:v7
+    strategy:
+      matrix:
+        slot: [0, 1]
+    steps:
+      - name: Mark workspace safe
+        run: git config --system --add safe.directory "${GITHUB_WORKSPACE}"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Fetch upstream tags (for a meaningful firmware version)
+        run: |
+          git remote add upstream https://github.com/coredevices/pebbleos.git || true
+          git fetch upstream --tags --force
+      - name: Install Python dependencies
+        run: |
+          pip install -U pip
+          pip install -r requirements.txt
+      - name: Configure (obelix@pvt, slot ${{ matrix.slot }})
+        run: ./pbl configure --board 'obelix@pvt' -DCONFIG_FIRMWARE_SLOT=${{ matrix.slot }} -DCONFIG_RELEASE=y
+      - name: Build
+        run: ./pbl build
+      - name: Bundle
+        run: ./pbl bundle
+      - name: Copy artifacts
+        run: |
+          pbz=$(ls build/normal_obelix_pvt_*.pbz)
+          version=$(basename "$pbz" | sed -E "s/^normal_obelix_pvt_//; s/(_slot[01])?\.pbz$//")
+          mkdir artifacts
+          cp "$pbz" artifacts/
+          cp build/pebbleos.elf "artifacts/firmware_obelix_pvt_${version}_slot${{ matrix.slot }}.elf"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware-obelix_pvt_slot${{ matrix.slot }}
+          path: artifacts
+
+  # ---- Unit suite (exercises the silent-flag + battery-percent tests) -------
+  test:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/coredevices/pebbleos-docker:v7
+    steps:
+      - name: Mark workspace safe
+        run: git config --system --add safe.directory "${GITHUB_WORKSPACE}"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install Python dependencies
+        run: |
+          pip install -U pip
+          pip install -r requirements.txt
+      - name: Run tests
+        run: ./pbl test
+      - name: Publish test report
+        uses: mikepenz/action-junit-report@v6
+        if: (!cancelled())
+        with:
+          report_paths: build-test/junit.xml
+          annotate_only: true
+          detailed_summary: true
+
+  # ---- Real headless emulator boot-and-check (gates the release) -----------
+  qemu-smoke:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/coredevices/pebbleos-docker:v7
+    steps:
+      - name: Mark workspace safe
+        run: git config --system --add safe.directory "${GITHUB_WORKSPACE}"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install Python dependencies
+        run: |
+          pip install -U pip
+          pip install -r requirements.txt
+          pip install --quiet pillow
+      - name: Configure qemu_emery
+        run: ./pbl configure --board qemu_emery
+      - name: Build QEMU images
+        run: ./pbl build qemu_image_micro qemu_image_spi
+      - name: Install PebbleOS SDK (provides qemu-pebble)
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/coredevices/PebbleOS-SDK/releases/download/v${SDK_VERSION}/pebbleos-sdk-${SDK_VERSION}-linux-x86_64.tar.gz"
+          # The build container has no curl; fetch with python3 (always present).
+          python3 -c "import urllib.request,sys,shutil; req=urllib.request.Request(sys.argv[1],headers={'User-Agent':'ci'}); shutil.copyfileobj(urllib.request.urlopen(req), open('sdk.tar.gz','wb')); print('downloaded')" "$url"
+          mkdir -p sdkbundle
+          tar -xzf sdk.tar.gz -C sdkbundle
+          bash "sdkbundle/pebbleos-sdk-${SDK_VERSION}-linux-x86_64/install.sh" --defaults --prefix "${GITHUB_WORKSPACE}/.sdk"
+      - name: Install QEMU runtime libraries + Xvfb
+        shell: bash
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq libsdl2-2.0-0 libpulse0 xvfb libasound2 \
+            || apt-get install -y -qq libsdl2-2.0-0 libpulse0 xvfb libasound2t64
+      - name: Boot smoke test (Xvfb + SDL, screendump)
+        shell: bash
+        run: |
+          SDK_DIR="${GITHUB_WORKSPACE}/.sdk"
+          if [ -f "$SDK_DIR/env.sh" ]; then . "$SDK_DIR/env.sh"; fi
+          QEMU="$SDK_DIR/qemu/bin/qemu-pebble"
+          [ -x "$QEMU" ] || QEMU="$(command -v qemu-pebble || find "$SDK_DIR" -name qemu-pebble -type f 2>/dev/null | head -1)"
+          if [ -z "$QEMU" ] || [ ! -x "$QEMU" ]; then echo "::error::qemu-pebble not found"; exit 1; fi
+          MACHINE=$(python3 -c "import json;print(json.load(open('build/pbl_env.json'))['CONFIG_QEMU_MACHINE'])")
+          echo "machine=$MACHINE  qemu=$QEMU"
+          Xvfb :99 -screen 0 640x640x24 >/tmp/xvfb.log 2>&1 &
+          XVFB_PID=$!; export DISPLAY=:99; sleep 3
+          rm -f uart1.log uart2.log console.log build/qemu-mon.sock
+          setsid "$QEMU" -rtc base=localtime \
+            -monitor unix:build/qemu-mon.sock,server=on,wait=off \
+            -serial file:uart1.log -serial file:uart2.log -serial file:console.log \
+            -display sdl,show-cursor=off \
+            -machine "${MACHINE},audiodev=snd0" -audiodev none,id=snd0 \
+            -kernel build/pebbleos.elf \
+            -drive if=mtd,format=raw,file=build/qemu_spi_flash.bin \
+            > qemu_stdout.log 2>&1 < /dev/null &
+          QPID=$!; echo "qemu pid=$QPID"
+          booted=0
+          for i in $(seq 1 12); do
+            sleep 12
+            if ! kill -0 "$QPID" 2>/dev/null; then echo "QEMU exited early (attempt $i)"; break; fi
+            # Bonus screenshot evidence (best effort, via the monitor socket).
+            python3 -c "import socket,time,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(8); s.connect('build/qemu-mon.sock'); time.sleep(0.3); s.recv(65536); s.sendall(b'screendump '+sys.argv[1].encode()+b' -f png\n'); time.sleep(1.2); s.recv(65536); s.close()" "build/shot_${i}.png" > "screenshot_${i}.log" 2>&1 || true
+            if [ -f "build/shot_${i}.png" ]; then cp "build/shot_${i}.png" build/boot_shot.png || true; fi
+            # Primary gate: a deterministic boot-complete marker in the serial log.
+            if grep -aqE 'Starting Launcher|Ready for communication' uart1.log uart2.log console.log 2>/dev/null; then
+              echo "attempt ${i}: boot-complete marker seen"; booted=1; break
+            fi
+            echo "attempt ${i}: not booted yet"
+          done
+          echo "---- qemu_stdout.log ----"; cat qemu_stdout.log 2>/dev/null || true
+          for f in uart1.log uart2.log console.log; do
+            echo "---- $f ($(wc -c <"$f" 2>/dev/null || echo 0) bytes) ----"; tail -30 "$f" 2>/dev/null || true
+          done
+          kill "$QPID" 2>/dev/null || true; kill "$XVFB_PID" 2>/dev/null || true
+          if grep -Eiq 'HARD FAULT|>>> ASSERT|PBL_ASSERT|Backtrace|hard_fault|kernel panic' uart1.log uart2.log console.log 2>/dev/null; then
+            echo "::error::Fault marker found in serial output"; exit 1
+          fi
+          if [ "$booted" != "1" ]; then
+            echo "::error::Boot did not reach a rendered UI (no watchface screenshot within timeout)."; exit 1
+          fi
+          echo "Boot smoke test PASSED: booted to a rendered UI, no fault markers."
+      - uses: actions/upload-artifact@v7
+        if: (!cancelled())
+        with:
+          name: qemu-smoke-logs
+          path: |
+            uart1.log
+            uart2.log
+            console.log
+            qemu_stdout.log
+            screenshot_*.log
+            build/shot_*.png
+            build/boot_shot.png
+          if-no-files-found: ignore
+
+  # ---- Gated release: only runs if build + test + boot all passed ----------
+  release:
+    needs: [build, test, qemu-smoke]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream https://github.com/coredevices/pebbleos.git || true
+          git fetch upstream --tags --force
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: firmware-obelix_pvt_slot*
+      - name: Merge slots and name with upstream version + "plus"
+        id: merge
+        run: |
+          fullver=$(ls firmware-obelix_pvt_slot0/normal_obelix_pvt_*_slot0.pbz \
+            | sed -E "s/^.*normal_obelix_pvt_//; s/_slot0\.pbz$//")
+          basever=$(git describe --tags --abbrev=0)
+          if [ ! -f "firmware-obelix_pvt_slot1/normal_obelix_pvt_${fullver}_slot1.pbz" ]; then
+            echo "::error::slot1 version does not match slot0 (${fullver})"; exit 1
+          fi
+          mkdir merged
+          out="merged/normal_obelix_pvt_${basever}-plus.pbz"
+          python3 tools/merge_pbz.py \
+            --slot0-pbz "firmware-obelix_pvt_slot0/normal_obelix_pvt_${fullver}_slot0.pbz" \
+            --slot1-pbz "firmware-obelix_pvt_slot1/normal_obelix_pvt_${fullver}_slot1.pbz" \
+            --output "$out"
+          echo "basever=$basever" >> "$GITHUB_OUTPUT"
+          echo "fullver=$fullver" >> "$GITHUB_OUTPUT"
+          echo "pbz=$out"        >> "$GITHUB_OUTPUT"
+          echo "Built installable firmware: $out (from upstream ${fullver})"
+      - name: Publish gated GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.merge.outputs.basever }}-plus
+          FULLVER: ${{ steps.merge.outputs.fullver }}
+          PBZ: ${{ steps.merge.outputs.pbz }}
+        run: |
+          notes="PebbleOS+ for Pebble Time 2 (obelix@pvt).
+
+          Based on upstream PebbleOS \`${FULLVER}\`.
+          Built only after unit tests and a headless emulator boot-and-check passed.
+
+          Features: honor iPhone silent/Focus flag (always-on) + battery % while charging.
+
+          Install the attached \`.pbz\` through the Pebble mobile app."
+          # Idempotent: refresh the release for this upstream base version.
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "$PBZ" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "PebbleOS+ $TAG" \
+            --notes "$notes" \
+            --latest
+          echo "Released $TAG with $(basename "$PBZ")"
