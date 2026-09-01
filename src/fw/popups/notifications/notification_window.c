@@ -1589,9 +1589,10 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
     return;
   }
 
-  // Quiet delivery: keep phone-silent notifications out of the popup/vibe/backlight path
-  if (type == NotificationMobile && alerts_preferences_get_respect_phone_silence() &&
-      prv_notification_is_phone_silent(id)) {
+  // PebbleOS+: unconditionally honor the phone's silent flag. Do NOT gate on the
+  // respect-phone-silence pref: that pref is restored from stored settings and can be
+  // overwritten by phone blob-sync, which would silently disable always-on suppression.
+  if (type == NotificationMobile && prv_notification_is_phone_silent(id)) {
     return;
   }
 
