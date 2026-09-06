@@ -89,6 +89,13 @@ void battery_ui_display_plugged(uint8_t percent) {
   s_modal_percent = percent;
 }
 
+void battery_ui_update_charging(uint8_t percent) {
+  // Mirrors the real function: only refreshes a visible charging modal.
+  if (s_modal_onscreen && s_modal_charging) {
+    s_modal_percent = percent;
+  }
+}
+
 void battery_ui_display_fully_charged(void) {
   s_modal_onscreen = true;
   s_modal_charging = false;
@@ -267,6 +274,26 @@ void test_battery_ui_fsm__warning(void) {
   prv_change_state(second_warning);
   cl_assert(s_modal_onscreen &&
             s_modal_percent == prv_warning_percent(BatteryUIWarningLevel_VeryLow));
+}
+
+void test_battery_ui_fsm__charging_percent_updates_live(void) {
+  // Plug in at 27%: charging modal opens, shows 27%, vibrates once.
+  prv_change_state(prv_make_state(27, true, true));
+  cl_assert(s_modal_onscreen && s_modal_charging);
+  cl_assert_equal_i(s_modal_percent, 27);
+  cl_assert_equal_i(s_vibe_count, 1);
+
+  // As the charge level climbs while still plugged in, the displayed percentage
+  // must follow it, without re-vibrating and without recreating the modal.
+  prv_change_state(prv_make_state(55, true, true));
+  cl_assert(s_modal_onscreen && s_modal_charging);
+  cl_assert_equal_i(s_modal_percent, 55);
+  cl_assert_equal_i(s_vibe_count, 1);
+
+  prv_change_state(prv_make_state(80, true, true));
+  cl_assert(s_modal_onscreen && s_modal_charging);
+  cl_assert_equal_i(s_modal_percent, 80);
+  cl_assert_equal_i(s_vibe_count, 1);
 }
 
 void test_battery_ui_fsm__uses_configured_warning_percentages(void) {

@@ -256,6 +256,11 @@ void battery_ui_handle_state_change_event(PreciseBatteryChargeState charge_state
   BatteryUIStateID next_state = prv_get_state(&charge_state);
   if (prv_is_valid_transition(next_state)) {
     prv_transition(next_state, &charge_state);
+  } else if (next_state == s_state && s_state == BatteryCharging) {
+    // Charging is not listed as a valid self-transition (that would re-run the
+    // entry function and vibrate on every charge tick). Refresh the displayed
+    // percentage in place instead, so it climbs live while plugged in.
+    battery_ui_update_charging(ratio32_to_percent(charge_state.charge_percent));
   }
 }
 
