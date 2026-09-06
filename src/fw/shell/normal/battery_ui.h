@@ -25,6 +25,11 @@ void battery_ui_handle_shut_down(void);
 //! Show the 'battery charging' modal dialog
 void battery_ui_display_plugged(uint8_t percent);
 
+//! Refresh the charging modal's displayed percentage in place. No-op if the
+//! charging modal is not currently on screen (does not create or re-pop it),
+//! and does not vibrate. Used to keep the percentage live as the battery fills.
+void battery_ui_update_charging(uint8_t percent);
+
 //! Show the 'battery charged' modal dialog
 void battery_ui_display_fully_charged(void);
 

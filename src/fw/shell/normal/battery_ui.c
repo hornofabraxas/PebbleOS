@@ -148,6 +148,20 @@ void battery_ui_display_plugged(uint8_t percent) {
   prv_display_modal(stack, prv_update_ui_charging, &display_data);
 }
 
+void battery_ui_update_charging(uint8_t percent) {
+  // Only refresh an already-visible charging modal; never create or re-pop one
+  // (that is the entry function's job, and it vibrates). This keeps the shown
+  // percentage in sync with the charge level without buzzing or flashing the
+  // modal back up if the user dismissed it.
+  if (!s_dialog) {
+    return;
+  }
+  BatteryChargingDisplayData display_data = {
+    .percent = percent,
+  };
+  prv_update_ui_charging(s_dialog, &display_data);
+}
+
 void battery_ui_display_fully_charged(void) {
   // If we're plugged in (charged), we want to alert the user of this,
   // but we don't want to overlay ourselves over anything they may have
