@@ -43,6 +43,19 @@ jobs:
         run: |
           git remote add upstream https://github.com/coredevices/pebbleos.git || true
           git fetch upstream --tags --force
+      - name: Pin firmware version to the exact upstream release tag
+        run: |
+          # Report the plain upstream version (e.g. v4.37.0) inside the firmware
+          # and the bundle manifest, instead of "<tag>-<N>-g<sha>". gitinfo.py
+          # derives the version from `git describe`; the feature commits sit on
+          # top of the release tag, so force-annotate that tag at HEAD and
+          # `git describe` returns it verbatim. Local to the CI checkout only.
+          # This matches the version the Pebble app expects, so a sideloaded
+          # build is not flagged as out of date.
+          base=$(git describe --tags --abbrev=0)
+          git -c user.email=ci@pebbleos-plus -c user.name=pebbleos-plus-bot \
+            tag -f -a "$base" -m "PebbleOS+ build of ${base}" HEAD
+          echo "Firmware version pinned to: $(git describe)"
       - name: Install Python dependencies
         run: |
           pip install -U pip
@@ -216,7 +229,10 @@ jobs:
             echo "::error::slot1 version does not match slot0 (${fullver})"; exit 1
           fi
           mkdir merged
-          out="merged/normal_obelix_pvt_${basever}-plus.pbz"
+          # Name the asset exactly like a stock build (no "-plus"); the firmware
+          # is version-pinned in the build job, so fullver is the plain upstream
+          # tag. The GitHub Release tag below keeps the "-plus" suffix.
+          out="merged/normal_obelix_pvt_${fullver}.pbz"
           python3 tools/merge_pbz.py \
             --slot0-pbz "firmware-obelix_pvt_slot0/normal_obelix_pvt_${fullver}_slot0.pbz" \
             --slot1-pbz "firmware-obelix_pvt_slot1/normal_obelix_pvt_${fullver}_slot1.pbz" \
