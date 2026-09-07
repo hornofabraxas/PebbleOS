@@ -53,10 +53,29 @@ jobs:
         if: steps.detect.outputs.act == 'true'
         run: |
           set -e
+          # The last pushed state; its .github/workflows is our curated CI set.
+          prev=$(git rev-parse origin/pebbleos-plus)
+          # Drop any prior workflow-pin commit (recreated fresh below) so pins
+          # never accumulate or conflict when replayed onto a later release.
+          while git log -1 --format='%s' | grep -q '^sync: pin fork CI workflows'; do
+            git reset --hard HEAD~1
+          done
           if ! git rebase "${{ steps.detect.outputs.tag }}"; then
             git rebase --abort || true
             echo "::error::Rebase onto ${{ steps.detect.outputs.tag }} conflicted. Manual reconciliation needed."
             exit 1
+          fi
+          # The default GITHUB_TOKEN cannot push changes under .github/workflows/.
+          # A new upstream release can add or edit workflow files (e.g. backport.yml)
+          # in the rebased base, which the push would then reject. We do not carry
+          # upstream's workflows anyway, so pin the directory to the last pushed
+          # state: this drops upstream's workflow changes, keeps only our own CI,
+          # and leaves an empty net workflow diff so the token push is allowed.
+          rm -rf .github/workflows
+          git checkout "$prev" -- .github/workflows
+          git add -A .github/workflows
+          if ! git diff --cached --quiet; then
+            git commit -m "sync: pin fork CI workflows (drop upstream workflow changes)"
           fi
           git push --force-with-lease origin pebbleos-plus
       - name: Dispatch the build pipeline
