@@ -52,7 +52,9 @@ jobs:
           # `git describe` returns it verbatim. Local to the CI checkout only.
           # This matches the version the Pebble app expects, so a sideloaded
           # build is not flagged as out of date.
-          base=$(git describe --tags --abbrev=0)
+          # Exclude our own "*-plus" release tags so the base is the plain
+          # upstream version (else it compounds into v4.37.0-plus-plus).
+          base=$(git describe --tags --abbrev=0 --exclude '*-plus*')
           git -c user.email=ci@pebbleos-plus -c user.name=pebbleos-plus-bot \
             tag -f -a "$base" -m "PebbleOS+ build of ${base}" HEAD
           echo "Firmware version pinned to: $(git describe)"
@@ -227,7 +229,7 @@ jobs:
         run: |
           fullver=$(ls firmware-obelix_pvt_slot0/normal_obelix_pvt_*_slot0.pbz \
             | sed -E "s/^.*normal_obelix_pvt_//; s/_slot0\.pbz$//")
-          basever=$(git describe --tags --abbrev=0)
+          basever=$(git describe --tags --abbrev=0 --exclude '*-plus*')
           if [ ! -f "firmware-obelix_pvt_slot1/normal_obelix_pvt_${fullver}_slot1.pbz" ]; then
             echo "::error::slot1 version does not match slot0 (${fullver})"; exit 1
           fi
