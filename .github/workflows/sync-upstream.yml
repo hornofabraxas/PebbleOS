@@ -36,17 +36,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          T=$(gh api repos/coredevices/pebbleos/releases/latest --jq '.tag_name')
-          echo "latest upstream release: $T"
+          # Our current upstream base (e.g. v4.37.0), excluding our own -plus tags.
+          base=$(git describe --tags --abbrev=0 --exclude '*-plus*')
+          echo "our base: $base"
+          # Do NOT trust releases/latest: GitHub returns the most recently
+          # *published* release, and upstream also ships backport releases (e.g.
+          # v4.27.2, v4.9.142.4) on divergent branches that are older/divergent
+          # from our lineage. Rebasing onto those replays hundreds of commits and
+          # conflicts. Scan releases newest-first and pick the newest one that is
+          # a genuine forward descendant of our base.
+          releases=$(gh api 'repos/coredevices/pebbleos/releases?per_page=30' \
+            --jq '.[] | select(.prerelease==false and .draft==false) | .tag_name' 2>/dev/null || true)
+          T=""
+          for tag in $releases; do
+            git rev-parse -q --verify "refs/tags/${tag}^{commit}" >/dev/null 2>&1 || continue
+            if git merge-base --is-ancestor "$base" "$tag" 2>/dev/null \
+               && ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+              T="$tag"; break
+            fi
+          done
+          if [ -z "$T" ]; then
+            echo "No new forward upstream release beyond ${base}; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "newest forward upstream release: $T"
           if gh release view "${T}-plus" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Already built ${T}-plus; nothing to do."
             echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if git merge-base --is-ancestor "$T" HEAD 2>/dev/null; then
-            echo "Our branch is already at or past ${T}; nothing new to build."
-            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          echo "New release ${T} is ahead of our branch; will rebase and build."
+          echo "New release ${T} is ahead of our base ${base}; will rebase and build."
           echo "act=true"  >> "$GITHUB_OUTPUT"
           echo "tag=$T"    >> "$GITHUB_OUTPUT"
       - name: Rebase feature commits onto the release tag
