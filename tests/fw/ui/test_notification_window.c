@@ -129,12 +129,6 @@ PreferredContentSize alerts_preferences_get_notification_content_size(void) {
   return NotificationContentSizeSystem;
 }
 
-static bool s_respect_phone_silence;
-
-bool alerts_preferences_get_respect_phone_silence(void) {
-  return s_respect_phone_silence;
-}
-
 // Local replacements for stubs_alerts.h so the notification-added path can be
 // exercised and the vibe gate observed per test.
 #include "pbl/services/notifications/alerts_private.h"
@@ -440,7 +434,6 @@ void test_notification_window__initialize(void) {
   attribute_list_destroy_list(&s_test_data.statics.attr_list);
   s_test_data = (NotificationWindowTestData){};
   s_notification_status_bar_style = NotificationStatusBarStyle_Default;
-  s_respect_phone_silence = false;
   s_should_notify = false;
   s_should_vibrate = false;
   s_should_vibrate_call_count = 0;
@@ -648,9 +641,8 @@ static void prv_setup_quiet_delivery_test(void) {
   };
 }
 
-void test_notification_window__silent_ancs_suppressed_when_pref_on(void) {
+void test_notification_window__silent_suppressed_without_ancs_flag(void) {
   prv_setup_quiet_delivery_test();
-  s_respect_phone_silence = true;
 
   // Platform-neutral: suppression works from header.silent alone, even without ancs_notif
   // (the companion-app / Android wire-flag case).
@@ -667,9 +659,8 @@ void test_notification_window__silent_ancs_suppressed_when_pref_on(void) {
   cl_assert_equal_i(s_notification_remove_count, 0);
 }
 
-void test_notification_window__non_silent_ancs_shown_when_pref_on(void) {
+void test_notification_window__non_silent_ancs_shown(void) {
   prv_setup_quiet_delivery_test();
-  s_respect_phone_silence = true;
 
   prv_store_and_add_notification(&s_quiet_notif_id, true /* ancs_notif */, false /* silent */);
 
@@ -679,12 +670,11 @@ void test_notification_window__non_silent_ancs_shown_when_pref_on(void) {
   cl_assert(s_should_vibrate_call_count > 0);
 }
 
-// PebbleOS+: the respect-phone-silence pref is intentionally ignored; a phone-silent
-// notification is suppressed unconditionally, even with the pref off (so a stored or
-// phone-synced pref value can never re-enable the buzz).
-void test_notification_window__silent_ancs_suppressed_ignoring_pref(void) {
+// PebbleOS+: a phone-silent ANCS notification is suppressed unconditionally. There is
+// deliberately no preference gating this, so nothing stored or synced from the phone can
+// re-enable the buzz.
+void test_notification_window__silent_ancs_suppressed(void) {
   prv_setup_quiet_delivery_test();
-  s_respect_phone_silence = false;
 
   prv_store_and_add_notification(&s_quiet_notif_id, true /* ancs_notif */, true /* silent */);
 
