@@ -59,11 +59,17 @@ static void prv_update_ui_fully_charged(Dialog *dialog, void *ignored) {
   dialog_set_icon(dialog, RESOURCE_ID_BATTERY_ICON_FULL_LARGE);
 }
 
+//! Single source of truth for the charging modal's text, so the initial render and
+//! the live refresh can never drift apart.
+static void prv_set_charging_text(Dialog *dialog, uint8_t percent) {
+  char text[32];
+  snprintf(text, sizeof(text), "%s\n%u%%", i18n_get("Charging", dialog), percent);
+  dialog_set_text(dialog, text);
+}
+
 static void prv_update_ui_charging(Dialog *dialog, void *context) {
   BatteryChargingDisplayData *data = context;
-  char text[32];
-  snprintf(text, sizeof(text), "%s\n%u%%", i18n_get("Charging", dialog), data->percent);
-  dialog_set_text(dialog, text);
+  prv_set_charging_text(dialog, data->percent);
   dialog_set_background_color(dialog, GColorLightGray);
   dialog_set_icon(dialog, RESOURCE_ID_BATTERY_ICON_CHARGING_LARGE);
 }
@@ -172,16 +178,21 @@ void battery_ui_update_charging(uint8_t percent) {
   if (!s_dialog) {
     return;
   }
-  char text[32];
-  snprintf(text, sizeof(text), "%s\n%u%%", i18n_get("Charging", s_dialog), percent);
-  dialog_set_text(s_dialog, text);
+  prv_set_charging_text(s_dialog, percent);
 }
 
 static void prv_charging_refresh_timer_cb(void *unused) {
   // Runs on KernelMain (the task that registered the timer), so touching the
   // modal here is safe. Poll the live battery level directly so the percentage
   // climbs even if the battery service does not deliver a per-percent event.
-  battery_ui_update_charging(battery_get_charge_state().charge_percent);
+  const BatteryChargeState state = battery_get_charge_state();
+  if (!state.is_charging) {
+    // Defensive: s_dialog only belongs to us while charging. If the state moved on
+    // without this timer being torn down, do not stamp "Charging" over whatever
+    // dialog is showing now.
+    return;
+  }
+  battery_ui_update_charging(state.charge_percent);
 }
 
 static void prv_stop_charging_refresh_timer(void) {
