@@ -1556,9 +1556,10 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
     return;
   }
 
-  // PebbleOS+: unconditionally honor the phone's silent flag. Do NOT gate on the
-  // respect-phone-silence pref: that pref is restored from stored settings and can be
-  // overwritten by phone blob-sync, which would silently disable always-on suppression.
+  // PebbleOS+: unconditionally honor the phone's silent flag. This is deliberately not
+  // gated by any preference. Upstream PR #1772 makes it opt-in via a companion-synced
+  // pref, but such a pref is restored from stored settings and can be overwritten by
+  // phone blob-sync, which would silently turn the feature off again.
   if (type == NotificationMobile && prv_notification_is_phone_silent(id)) {
     return;
   }
