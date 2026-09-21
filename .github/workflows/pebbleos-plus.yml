@@ -79,6 +79,10 @@ jobs:
         with:
           name: firmware-obelix_pvt_slot${{ matrix.slot }}
           path: artifacts
+          # Pure intermediates: the release job consumes them in the same run and
+          # the installable firmware lives on the GitHub Release. The 90-day default
+          # piled up ~11MB per slot per build until artifact storage 403'd.
+          retention-days: 1
 
   # ---- Unit suite (exercises the silent-flag + battery-percent tests) -------
   test:
@@ -206,6 +210,8 @@ jobs:
             build/shot_*.png
             build/boot_shot.png
           if-no-files-found: ignore
+          # Diagnostics only; keep them briefly rather than the 90-day default.
+          retention-days: 7
 
   # ---- Gated release: only runs if build + test + boot all passed ----------
   release:
