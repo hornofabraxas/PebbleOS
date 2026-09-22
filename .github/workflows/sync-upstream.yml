@@ -17,6 +17,8 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-24.04
+    # Normally ~20s. A wedged fetch/rebase must not sit on the 6h default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
