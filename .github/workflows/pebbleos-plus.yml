@@ -27,6 +27,8 @@ jobs:
   # ---- Build both firmware slots -------------------------------------------
   build:
     runs-on: ubuntu-24.04
+    # ~5 min in practice; a hang should fail fast, not burn the 6h default.
+    timeout-minutes: 30
     container:
       image: ghcr.io/coredevices/pebbleos-docker:v7
     strategy:
@@ -87,6 +89,7 @@ jobs:
   # ---- Unit suite (exercises the silent-flag + battery-percent tests) -------
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
       image: ghcr.io/coredevices/pebbleos-docker:v7
     steps:
@@ -101,7 +104,14 @@ jobs:
           pip install -U pip
           pip install -r requirements.txt
       - name: Run tests
-        run: pbl test
+        # pbl forwards unknown args to ctest. Without a per-test timeout a
+        # single wedged test hangs the whole job (test_kernel did, 2026-09-21)
+        # and only the 6h default stops it. This turns a hang into a named
+        # test failure instead. The slowest real test is test_pfs_obelix at
+        # ~66s, so 600s is ~9x headroom: a timeout here blocks a firmware
+        # release, and timeout-minutes above is the backstop for a wedged
+        # suite, so this value is set to not fire on a merely slow runner.
+        run: pbl test --timeout 600
       - name: Publish test report
         uses: mikepenz/action-junit-report@v6
         if: (!cancelled())
@@ -113,6 +123,7 @@ jobs:
   # ---- Real headless emulator boot-and-check (gates the release) -----------
   qemu-smoke:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
       image: ghcr.io/coredevices/pebbleos-docker:v7
     steps:
@@ -199,6 +210,9 @@ jobs:
           echo "Boot smoke test PASSED: booted to a rendered UI, no fault markers."
       - uses: actions/upload-artifact@v7
         if: (!cancelled())
+        # Diagnostics only, and the boot gate above has already decided pass/fail.
+        # An artifact-storage 403 here used to fail the job and block the release.
+        continue-on-error: true
         with:
           name: qemu-smoke-logs
           path: |
@@ -217,6 +231,7 @@ jobs:
   release:
     needs: [build, test, qemu-smoke]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
