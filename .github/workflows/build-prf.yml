@@ -26,7 +26,6 @@ jobs:
               - 'boards/**'
               - 'platform/**'
               - 'resources/**'
-              - 'soc/**'
               - 'src/**'
               - 'tools/**'
               - 'third_party/**'
