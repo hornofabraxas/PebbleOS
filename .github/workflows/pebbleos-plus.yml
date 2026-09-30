@@ -57,6 +57,8 @@ jobs:
           # Exclude our own "*-plus" release tags so the base is the plain
           # upstream version (else it compounds into v4.37.0-plus-plus).
           base=$(git describe --tags --abbrev=0 --exclude '*-plus*')
+          # Fail now, not at release time, if this would be a DEV-band image.
+          python3 .github/scripts/check_boot_priority.py tag "$base"
           git -c user.email=ci@pebbleos-plus -c user.name=pebbleos-plus-bot \
             tag -f -a "$base" -m "PebbleOS+ build of ${base}" HEAD
           echo "Firmware version pinned to: $(git describe)"
@@ -267,6 +269,14 @@ jobs:
           echo "fullver=$fullver" >> "$GITHUB_OUTPUT"
           echo "pbz=$out"        >> "$GITHUB_OUTPUT"
           echo "Built installable firmware: $out (from upstream ${fullver})"
+      - name: "Guard: both slots must carry a release-band boot priority"
+        env:
+          PBZ: ${{ steps.merge.outputs.pbz }}
+          FULLVER: ${{ steps.merge.outputs.fullver }}
+        run: |
+          # A DEV-band image outranks every release on the watch; never ship one.
+          python3 .github/scripts/check_boot_priority.py self-test
+          python3 .github/scripts/check_boot_priority.py pbz "$PBZ" "$FULLVER"
       - name: Publish gated GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
