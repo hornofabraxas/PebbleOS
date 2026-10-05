@@ -1,0 +1,128 @@
+name: Sync on upstream release
+
+# Polls upstream PebbleOS for a new *release*. When one appears that we have not
+# built yet, it rebases the PebbleOS+ commits onto that release tag
+# and dispatches the build/test/boot/release pipeline. A rebase conflict fails
+# the run (that is the signal for manual reconciliation).
+
+on:
+  schedule:
+    - cron: "23 * * * *"   # hourly (at :23)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    # Normally ~20s. A wedged fetch/rebase must not sit on the 6h default.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: pebbleos-plus
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - name: Configure git identity
+        run: |
+          git config user.name "pebbleos-plus-bot"
+          git config user.email "actions@github.com"
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/coredevices/pebbleos.git || true
+          git fetch upstream --tags --force --quiet
+      - name: Detect a new upstream release to build
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Our current upstream base (e.g. v4.37.0), excluding our own -plus tags.
+          base=$(git describe --tags --abbrev=0 --exclude '*-plus*')
+          echo "our base: $base"
+          # Do NOT trust releases/latest: GitHub returns the most recently
+          # *published* release, which is often a backport (v4.30.4, v4.9.142.5).
+          # Do NOT require the release to descend from our base either: upstream
+          # cuts patch releases on a release branch (v4.38.1..v4.38.4 are
+          # cherry-picks off v4.38.0) and minor releases from main, so v4.39.0
+          # forks from v4.38.0 and is NOT a descendant of v4.38.4. An ancestry
+          # filter skipped it and passed green on every run. Pick by version
+          # instead: the highest plain vX.Y.Z release above our base. Backports
+          # sort below our base and drop out on their own.
+          # No "|| true": if the API call fails, fail the run rather than
+          # report "nothing to do".
+          releases=$(gh api 'repos/coredevices/pebbleos/releases?per_page=30' \
+            --jq '.[] | select(.prerelease==false and .draft==false) | .tag_name')
+          [ -n "$releases" ] || { echo "::error::Upstream release list came back empty."; exit 1; }
+          # True if version $1 sorts strictly above version $2.
+          ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+          T=""
+          for tag in $releases; do
+            ver_gt "$tag" "$base" || continue
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              # Only vX.Y.Z boots in pblboot's release band; anything else
+              # would be a DEV-band image that outranks every release, and
+              # check_boot_priority.py refuses to build it. Say so, so a skip
+              # is never silent.
+              echo "::warning::Skipping upstream release ${tag}: not a plain vX.Y.Z tag."
+              continue
+            fi
+            if [ -z "$T" ] || ver_gt "$tag" "$T"; then T="$tag"; fi
+          done
+          if [ -z "$T" ]; then
+            echo "No upstream release newer than ${base}; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "newest upstream release: $T"
+          if ! git rev-parse -q --verify "refs/tags/${T}^{commit}" >/dev/null; then
+            echo "::error::Upstream release ${T} has no fetched tag; cannot rebase onto it."
+            exit 1
+          fi
+          if gh release view "${T}-plus" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Already built ${T}-plus; nothing to do."
+            echo "act=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "New release ${T} is ahead of our base ${base}; will rebase and build."
+          echo "act=true"  >> "$GITHUB_OUTPUT"
+          echo "tag=$T"    >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: Rebase feature commits onto the release tag
+        if: steps.detect.outputs.act == 'true'
+        run: |
+          set -e
+          # The last pushed state; its .github/workflows is our curated CI set.
+          prev=$(git rev-parse origin/pebbleos-plus)
+          # Replay only our own commits (base..HEAD) onto the new release. A
+          # plain "git rebase <tag>" would also replay any upstream commits
+          # between the two tags that the new tag lacks, i.e. the release
+          # branch's backports when moving from v4.38.4 to v4.39.0.
+          # The todo-list filter drops every prior workflow-pin commit
+          # (recreated fresh below), wherever it sits, not only at the tip: a
+          # pin replayed onto a release that edits those workflows conflicts.
+          if ! GIT_SEQUENCE_EDITOR="perl -i -ne 'print unless /sync: pin fork CI workflows/'" \
+               git rebase -i --onto "${{ steps.detect.outputs.tag }}" "${{ steps.detect.outputs.base }}"; then
+            git rebase --abort || true
+            echo "::error::Rebase onto ${{ steps.detect.outputs.tag }} conflicted. Manual reconciliation needed."
+            exit 1
+          fi
+          # The default GITHUB_TOKEN cannot push changes under .github/workflows/.
+          # A new upstream release can add or edit workflow files (e.g. backport.yml)
+          # in the rebased base, which the push would then reject. We do not carry
+          # upstream's workflows anyway, so pin the directory to the last pushed
+          # state: this drops upstream's workflow changes, keeps only our own CI,
+          # and leaves an empty net workflow diff so the token push is allowed.
+          rm -rf .github/workflows
+          git checkout "$prev" -- .github/workflows
+          git add -A .github/workflows
+          if ! git diff --cached --quiet; then
+            git commit -m "sync: pin fork CI workflows (drop upstream workflow changes)"
+          fi
+          git push --force-with-lease origin pebbleos-plus
+      - name: Dispatch the build pipeline
+        if: steps.detect.outputs.act == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pebbleos-plus.yml --repo "$GITHUB_REPOSITORY" --ref pebbleos-plus
+          echo "Dispatched PebbleOS+ build for ${{ steps.detect.outputs.tag }}-plus."
