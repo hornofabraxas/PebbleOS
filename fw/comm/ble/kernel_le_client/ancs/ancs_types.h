@@ -217,4 +217,5 @@ typedef enum {
   ANCSProperty_iOS9 = (1 << 4),
   //! Pre-existing notification seen right after reconnecting, possibly missed while disconnected
   ANCSProperty_Recovered = (1 << 5),
+  ANCSProperty_Silent = (1 << 6),
 } ANCSProperty;
