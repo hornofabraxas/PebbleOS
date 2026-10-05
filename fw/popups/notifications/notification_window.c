@@ -1574,6 +1574,18 @@ static void prv_do_notification_vibe(NotificationWindowData *data, Uuid *id) {
   }
 }
 
+// Returns true if the stored notification was delivered silently by the phone
+// (iOS via ANCS EventFlagSilent, or a companion app that set the silent flag).
+static bool prv_notification_is_phone_silent(Uuid *id) {
+  TimelineItem item = {};
+  if (!notification_storage_get(id, &item)) {
+    return false;
+  }
+  const bool is_phone_silent = item.header.silent;
+  timeline_item_free_allocated_buffer(&item);
+  return is_phone_silent;
+}
+
 static void prv_handle_notification_added_common(Uuid *id, NotificationType type) {
   NotificationWindowData *data = &s_notification_window_data;
   prv_log_notification_vibe("received", id);
@@ -1587,6 +1599,14 @@ static void prv_handle_notification_added_common(Uuid *id, NotificationType type
   if (do_not_disturb_is_active() &&
       alerts_preferences_dnd_get_show_notifications() == DndNotificationModeHide) {
     prv_log_notification_vibe("skipped: hidden by DND", id);
+    return;
+  }
+
+  // PebbleOS+: unconditionally honor the phone's silent flag. This is deliberately not
+  // gated by any preference. Upstream PR #1772 makes it opt-in via a companion-synced
+  // pref, but such a pref is restored from stored settings and can be overwritten by
+  // phone blob-sync, which would silently turn the feature off again.
+  if (type == NotificationMobile && prv_notification_is_phone_silent(id)) {
     return;
   }
 
