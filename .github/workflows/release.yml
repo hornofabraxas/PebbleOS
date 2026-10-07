@@ -13,14 +13,10 @@ jobs:
   build-firmware:
     uses: ./.github/workflows/build-firmware.yml
     secrets: inherit
-    with:
-      sbom: true
 
   build-prf:
     uses: ./.github/workflows/build-prf.yml
     secrets: inherit
-    with:
-      sbom: true
 
   build-qemu:
     uses: ./.github/workflows/build-qemu.yml
@@ -60,7 +56,7 @@ jobs:
           ls -l release
 
       - name: Create release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.2
         with:
           files: release/*
 
