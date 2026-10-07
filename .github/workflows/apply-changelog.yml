@@ -1,0 +1,38 @@
+name: Apply upstream changelog to release
+
+# When the changelog routine pushes changelogs/<tag>.md, put it on the matching
+# <tag>-plus release if that release already exists. If it does not exist yet,
+# the PebbleOS+ release job applies the changelog when it publishes, so the two
+# can land in either order. Re-applying is idempotent.
+
+on:
+  push:
+    branches: ['claude/changelogs']
+    paths: ['changelogs/*.md']
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Apply each changed changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A brand-new branch has no "before"; then apply every changelog.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            files=$(ls changelogs/*.md)
+          else
+            files=$(git diff --name-only --diff-filter=AM "$BEFORE" "$GITHUB_SHA" -- 'changelogs/*.md')
+          fi
+          for f in $files; do
+            python3 tools/changelog.py apply "$(basename "$f" .md)"
+          done
