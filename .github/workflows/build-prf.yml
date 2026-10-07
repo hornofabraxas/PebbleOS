@@ -4,13 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, '*-branch']
+    branches: [main]
   workflow_call:
-    inputs:
-      sbom:
-        description: Also generate the software bill of materials
-        type: boolean
-        default: false
 
 jobs:
   changes-prf:
@@ -31,9 +26,7 @@ jobs:
               - 'boards/**'
               - 'platform/**'
               - 'resources/**'
-              - 'soc/**'
-              - 'drivers/**'
-              - 'fw/**'
+              - 'src/**'
               - 'tools/**'
               - 'third_party/**'
               - 'cmake/**'
@@ -46,7 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     container:
-      image: ghcr.io/coredevices/pebbleos-docker:v8
+      image: ghcr.io/coredevices/pebbleos-docker:v7
 
     strategy:
       matrix:
@@ -104,17 +97,13 @@ jobs:
             OPTS="${OPTS} -DCONFIG_RELEASE=y"
           fi
 
-          pbl configure --board '${{ matrix.board }}' --variant prf $OPTS
+          ./pbl configure --board '${{ matrix.board }}' --variant prf $OPTS
 
       - name: Build
-        run: pbl build
+        run: ./pbl build
 
       - name: Bundle
-        run: pbl bundle
-
-      - name: SBOM
-        if: inputs.sbom
-        run: pbl build sbom
+        run: ./pbl bundle
 
       - name: Copy artifacts
         env:
@@ -136,9 +125,6 @@ jobs:
           cp build/pebbleos.hex "artifacts/${prefix}_${BOARD}_${version}.hex"
           cp build/pebbleos.bin "artifacts/${prefix}_${BOARD}_${version}.bin"
           cp build/pebbleos.elf "artifacts/${prefix}_${BOARD}_${version}.elf"
-          if [ -f build/pebbleos.cdx.json ]; then
-            cp build/pebbleos.cdx.json "artifacts/${prefix}_${BOARD}_${version}.cdx.json"
-          fi
 
       - name: Store
         uses: actions/upload-artifact@v7

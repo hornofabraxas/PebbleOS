@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, '*-branch']
+    branches: [main]
 
 jobs:
   changes-test:
@@ -28,9 +28,7 @@ jobs:
               - 'platform/**'
               - 'resources/**'
               - 'sdk/**'
-              - 'soc/**'
-              - 'drivers/**'
-              - 'fw/**'
+              - 'src/**'
               - 'stored_apps/**'
               - 'subsys/**'
               - 'tests/**'
@@ -42,7 +40,7 @@ jobs:
     if: needs.changes-test.outputs.should-test == 'true'
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/coredevices/pebbleos-docker:v8
+      image: ghcr.io/coredevices/pebbleos-docker:v7
     steps:
       - name: Mark Github workspace as safe
         run: git config --system --add safe.directory "${GITHUB_WORKSPACE}" 
@@ -66,7 +64,7 @@ jobs:
       - name: Run tests
         # ctest runs the whole suite before reporting, so one failure does
         # not hide the rest. The job still fails if anything failed.
-        run: pbl test
+        run: ./pbl test
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v6

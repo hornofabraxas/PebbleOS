@@ -4,13 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, '*-branch']
+    branches: [main]
   workflow_call:
-    inputs:
-      sbom:
-        description: Also generate the software bill of materials
-        type: boolean
-        default: false
 
 jobs:
   changes-firmware:
@@ -32,9 +27,7 @@ jobs:
               - 'platform/**'
               - 'resources/**'
               - 'sdk/**'
-              - 'soc/**'
-              - 'drivers/**'
-              - 'fw/**'
+              - 'src/**'
               - 'stored_apps/**'
               - 'tools/**'
               - 'third_party/**'
@@ -48,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     container:
-      image: ghcr.io/coredevices/pebbleos-docker:v8
+      image: ghcr.io/coredevices/pebbleos-docker:v7
 
     strategy:
       matrix:
@@ -112,17 +105,13 @@ jobs:
           fi
 
       - name: Configure
-        run: pbl configure --board '${{ matrix.board }}' -DCONFIG_FIRMWARE_SLOT=${{ matrix.slot }} -DCONFIG_RELEASE=y
+        run: ./pbl configure --board '${{ matrix.board }}' -DCONFIG_FIRMWARE_SLOT=${{ matrix.slot }} -DCONFIG_RELEASE=y
 
       - name: Build
-        run: pbl build
+        run: ./pbl build
 
       - name: Bundle
-        run: pbl bundle
-
-      - name: SBOM
-        if: inputs.sbom
-        run: pbl build sbom
+        run: ./pbl bundle
 
       - name: Copy artifacts
         env:
@@ -139,9 +128,6 @@ jobs:
           cp build/pebbleos.elf "artifacts/firmware_${BOARD}_${version}${SLOT_SUFFIX}.elf"
           cp build/pebbleos_loghash_dict.json \
             "artifacts/firmware_${BOARD}_${version}${SLOT_SUFFIX}_loghash_dict.json"
-          if [ -f build/pebbleos.cdx.json ]; then
-            cp build/pebbleos.cdx.json "artifacts/firmware_${BOARD}_${version}${SLOT_SUFFIX}.cdx.json"
-          fi
 
       - name: Copy translation source
         if: matrix.board == 'asterix'
