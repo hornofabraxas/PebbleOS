@@ -46,7 +46,7 @@ release can be published in either order.
 
 ## Automatic rebuilds on upstream releases
 
-`sync-upstream.yml` polls upstream every few hours (an hourly cron that GitHub
+`sync-upstream.yml` polls upstream every few hours (a two-hourly cron that GitHub
 runs late or skips under load). When a new upstream *release* appears that has
 not been built yet, it rebases the fork's own commits onto that release tag and
 dispatches the build pipeline, which publishes a fresh `vX.Y.Z-plus` release on

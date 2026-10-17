@@ -7,7 +7,7 @@ name: Sync on upstream release
 
 on:
   schedule:
-    - cron: "23 * * * *"   # hourly (at :23)
+    - cron: "23 */2 * * *"   # every 2 hours (at :23)
   workflow_dispatch:
 
 permissions:
