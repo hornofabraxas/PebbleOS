@@ -13,14 +13,10 @@ jobs:
   build-firmware:
     uses: ./.github/workflows/build-firmware.yml
     secrets: inherit
-    with:
-      sbom: true
 
   build-prf:
     uses: ./.github/workflows/build-prf.yml
     secrets: inherit
-    with:
-      sbom: true
 
   build-qemu:
     uses: ./.github/workflows/build-qemu.yml
@@ -48,16 +44,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Download firmware artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: firmware-*
-          path: artifacts
-
-      - name: Download PRF artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: prf-*
           path: artifacts
 
       - name: Collect release files
@@ -66,25 +55,10 @@ jobs:
           find artifacts -type f -exec cp {} release/ \;
           ls -l release
 
-      - name: Check if tag is on main
-        id: main
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$TAG...main" --jq .status)
-          if [[ "$status" == "ahead" || "$status" == "identical" ]]; then
-            echo "on_main=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "on_main=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Create release
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.2
         with:
           files: release/*
-          make_latest: ${{ steps.main.outputs.on_main }}
 
       - name: Publish release to eng-dash
         if: ${{ github.repository == 'coredevices/PebbleOS' }}
