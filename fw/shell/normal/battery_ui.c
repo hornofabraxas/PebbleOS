@@ -7,7 +7,9 @@
 #include <stdio.h>
 
 #include <pbl/services/battery/battery_curve.h>
+#include <pbl/services/battery/battery_state.h>
 #include <pbl/services/clock.h>
+#include <pbl/services/evented_timer.h>
 #include <pbl/services/i18n/i18n.h>
 #include <pbl/util/math.h>
 
@@ -22,7 +24,15 @@
 
 typedef void (*DialogUpdateFn)(Dialog *, void *);
 
+// How often to re-read the battery level and refresh the shown charging
+// percentage while the charging modal is up.
+#define CHARGING_REFRESH_INTERVAL_MS 3000
+
 static Dialog *s_dialog = nullptr;
+static EventedTimerID s_charging_refresh_timer = EVENTED_TIMER_INVALID_ID;
+
+static void prv_charging_refresh_timer_cb(void *unused);
+static void prv_stop_charging_refresh_timer(void);
 
 // Liquid polygon in the charging icon: bottom-left, top-left, top-right, bottom-right at 100%
 #define LIQUID_COMMAND_IDX 2
@@ -41,6 +51,10 @@ typedef struct {
   GColor background_color;
   ResourceId warning_icon;
 } BatteryWarningDisplayData;
+
+typedef struct {
+  uint8_t percent;
+} BatteryChargingDisplayData;
 
 // UI Callbacks
 ///////////////////////
@@ -144,8 +158,17 @@ static void prv_update_ui_fully_charged(Dialog *dialog, void *ignored) {
   prv_update_liquid(dialog);
 }
 
-static void prv_update_ui_charging(Dialog *dialog, void *ignored) {
-  dialog_set_text(dialog, i18n_get("Charging", dialog));
+//! Single source of truth for the charging modal's text, so the initial render and
+//! the live refresh can never drift apart.
+static void prv_set_charging_text(Dialog *dialog, uint8_t percent) {
+  char text[32];
+  snprintf(text, sizeof(text), "%s\n%u%%", i18n_get("Charging", dialog), percent);
+  dialog_set_text(dialog, text);
+}
+
+static void prv_update_ui_charging(Dialog *dialog, void *context) {
+  BatteryChargingDisplayData *data = context;
+  prv_set_charging_text(dialog, data->percent);
   dialog_set_background_color(dialog, GColorLightGray);
   dialog_set_icon(dialog, RESOURCE_ID_BATTERY_ICON_CHARGING_LARGE);
   prv_update_liquid(dialog);
@@ -180,6 +203,7 @@ static void prv_dialog_on_unload(void *context) {
   if (dialog == s_dialog) {
     prv_liquid_animation_stop();
     s_dialog = nullptr;
+    prv_stop_charging_refresh_timer();
   }
 }
 
@@ -243,11 +267,48 @@ void battery_ui_display_plugged(uint8_t percent) {
   // but we don't want to overlay ourselves over anything they may have
   // on the screen at the moment.
   WindowStack *stack = modal_manager_get_window_stack(ModalPriorityGeneric);
-  prv_display_modal(stack, prv_update_ui_charging, nullptr);
+  BatteryChargingDisplayData display_data = {
+    .percent = percent,
+  };
+  prv_display_modal(stack, prv_update_ui_charging, &display_data);
+
+  // Keep the shown percentage live while the charging modal is up.
+  if (s_charging_refresh_timer == EVENTED_TIMER_INVALID_ID) {
+    s_charging_refresh_timer = evented_timer_register(
+        CHARGING_REFRESH_INTERVAL_MS, true /*repeating*/, prv_charging_refresh_timer_cb, nullptr);
+  }
+}
+
+static void prv_charging_refresh_timer_cb(void *unused) {
+  // Runs on KernelMain (the task that registered the timer), so touching the
+  // modal here is safe. Poll the live battery level directly so the percentage
+  // climbs even if the battery service does not deliver a per-percent event.
+  const BatteryChargeState state = battery_get_charge_state();
+  if (!state.is_charging) {
+    // Defensive: s_dialog only belongs to us while charging. If the state moved on
+    // without this timer being torn down, do not stamp "Charging" over whatever
+    // dialog is showing now.
+    return;
+  }
+  battery_ui_update_charge_level(state.charge_percent);
+}
+
+static void prv_stop_charging_refresh_timer(void) {
+  if (s_charging_refresh_timer != EVENTED_TIMER_INVALID_ID) {
+    evented_timer_cancel(s_charging_refresh_timer);
+    s_charging_refresh_timer = EVENTED_TIMER_INVALID_ID;
+  }
 }
 
 void battery_ui_update_charge_level(uint8_t percent) {
   s_liquid.percent = percent;
+  // Refresh only the percentage text of an already-visible charging modal. Does
+  // not touch the icon (so the fill animation is not restarted) or vibrate, and
+  // never creates/re-pops a dismissed modal.
+  if (!s_dialog) {
+    return;
+  }
+  prv_set_charging_text(s_dialog, percent);
 }
 
 void battery_ui_display_fully_charged(void) {
@@ -273,6 +334,7 @@ void battery_ui_display_warning(uint32_t percent, BatteryUIWarningLevel warning_
 }
 
 void battery_ui_dismiss_modal(void) {
+  prv_stop_charging_refresh_timer();
   if (s_dialog) {
     dialog_pop(s_dialog);
     s_dialog = nullptr;
