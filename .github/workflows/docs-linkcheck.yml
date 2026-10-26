@@ -33,4 +33,12 @@ jobs:
         run: pip install -r docs/requirements.txt
 
       - name: Check links
-        run: sphinx-build -b linkcheck docs _linkcheck
+        # The wasm playground only builds for HTML; it has no links to check.
+        # Doxygen pages (apidoc/) exist only in the Read the Docs build, and
+        # localhost links are instructions. Extend conf.py's ignore list in
+        # this checkout only, keeping upstream's entries.
+        run: |
+          cat >> docs/conf.py <<'EOF'
+          linkcheck_ignore += [r"(\.\./)*apidoc/", r"https?://localhost[:/]"]
+          EOF
+          sphinx-build -b linkcheck -D pbl_playground=0 docs _linkcheck
