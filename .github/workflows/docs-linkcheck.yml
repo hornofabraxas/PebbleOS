@@ -34,11 +34,18 @@ jobs:
 
       - name: Check links
         # The wasm playground only builds for HTML; it has no links to check.
-        # Doxygen pages (apidoc/) exist only in the Read the Docs build, and
-        # localhost links are instructions. Extend conf.py's ignore list in
-        # this checkout only, keeping upstream's entries.
+        # Doxygen pages (apidoc/) exist only in the Read the Docs build,
+        # localhost links are instructions, and these vendor sites refuse
+        # (403) or stall bots. Extend conf.py's ignore list in this checkout
+        # only, keeping upstream's entries.
         run: |
           cat >> docs/conf.py <<'EOF'
-          linkcheck_ignore += [r"(\.\./)*apidoc/", r"https?://localhost[:/]"]
+          linkcheck_ignore += [
+              r"(\.\./)*apidoc/",
+              r"https?://localhost[:/]",
+              r"https://www\.nordicsemi\.com/",
+              r"https://www\.renesas\.com/",
+              r"https://www\.st\.com/",
+          ]
           EOF
           sphinx-build -b linkcheck -D pbl_playground=0 docs _linkcheck
