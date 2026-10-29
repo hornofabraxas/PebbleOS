@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, '*-branch']
+    branches: [main]
   workflow_call:
 
 jobs:
@@ -23,25 +23,16 @@ jobs:
             src:
               - '.github/actions/**'
               - '.github/workflows/build-qemu-sdkshell.yml'
-              - 'apps/**'
-              - 'boards/**'
-              - 'cmake/**'
-              - 'drivers/**'
-              - 'fw/**'
-              - 'include/**'
-              - 'kernel/**'
-              - 'lib/**'
+              - 'platform/**'
               - 'resources/**'
               - 'sdk/**'
-              - 'soc/**'
-              - 'subsys/**'
-              - 'third_party/**'
+              - 'src/**'
+              - 'stored_apps/**'
               - 'tools/**'
+              - 'third_party/**'
+              - 'cmake/**'
               - 'CMakeLists.txt'
               - 'Kconfig'
-              - 'SDK_VERSION'
-              - 'pbl.yml'
-              - 'requirements.txt'
 
   build-qemu-sdkshell:
     needs: changes-qemu-sdkshell
@@ -49,7 +40,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     container:
-      image: ghcr.io/coredevices/pebbleos-docker:v10
+      image: ghcr.io/coredevices/pebbleos-docker:v7
 
     strategy:
       matrix:
@@ -84,10 +75,10 @@ jobs:
         run: echo "dir=$(npm config get cache)" >> ${GITHUB_OUTPUT}
 
       - name: Configure
-        run: pbl configure --board ${{ matrix.board }} -DCONFIG_SHELL_SDK=y
+        run: ./pbl configure --board ${{ matrix.board }} -DCONFIG_SHELL_SDK=y
 
       - name: Build
-        run: pbl build qemu_image_micro qemu_image_spi
+        run: ./pbl build qemu_image_micro qemu_image_spi
 
       - name: Copy artifacts
         run: |
